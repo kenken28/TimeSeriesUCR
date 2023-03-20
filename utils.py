@@ -1,19 +1,8 @@
-import datetime
-import math
-import matplotlib.pyplot as plt
 import numpy as np
 import os
 import tf2onnx
 import tensorflow as tf
-import onnxruntime as ort
-from PIL import Image
-import shutil
-import h5py
-import pandas as pd
-from multiprocessing import Pool, cpu_count
-from tqdm import tqdm
 from typing import Union
-from itertools import repeat
 
 
 def GB(n):
@@ -36,7 +25,7 @@ def partitions_dataset(ds, val_portion=0.7, shuffle=True, seed=0):
     :param val_portion: percentage of validation dataset
     :param shuffle: set to True to shuffle dataset before splitting
     :param seed: seed for shuffling
-    :return: a 3-tuple of (training, validation, testing) datasets
+    :return: a tuple of (training, validation) datasets
     """
     assert val_portion < 1.0
     ds_size = ds.cardinality().numpy()
@@ -49,11 +38,11 @@ def partitions_dataset(ds, val_portion=0.7, shuffle=True, seed=0):
     return train_ds, val_ds
 
 
-def load_data(data_dir, data_name, nan_filler=np.nan):
+def load_data(data_dir, data_name):
     train_data_path = os.path.join(data_dir, data_name, f'{data_name}_TEST.tsv')
     test_data_path = os.path.join(data_dir, data_name, f'{data_name}_TRAIN.tsv')
-    train_data = load_tsv_to_npy(train_data_path, nan_filler)
-    test_data = load_tsv_to_npy(test_data_path, nan_filler)
+    train_data = load_tsv_to_npy(train_data_path)
+    test_data = load_tsv_to_npy(test_data_path)
     unique_y_list = map_y(train_data, test_data)
     return {
         'train': train_data,
@@ -72,8 +61,8 @@ def map_y(train_data, test_data):
     return unique_train
 
 
-def load_tsv_to_npy(tsv_path, nan_filler):
-    data = np.genfromtxt(tsv_path, dtype=float, delimiter='\t', missing_values='NaN', filling_values=nan_filler)
+def load_tsv_to_npy(tsv_path):
+    data = np.nan_to_num(np.genfromtxt(tsv_path, dtype=float, delimiter='\t'))
     y_data = data[:, 0]
     x_data = data[:, 1:]
     return {

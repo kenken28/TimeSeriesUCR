@@ -2,8 +2,9 @@
 This project compares the accuracies of simple neural network models on the UCR time series classification datasets.
 
 ## Neural network models
-- Multilayer Perceptron
-- (TODO)
+- MLP
+- CNN-based encoder
+- LSTM
 
 ## Dependency
 - TensorFlow 2.10

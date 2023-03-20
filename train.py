@@ -1,8 +1,9 @@
-import numpy as np
-import os
 import argparse
-import tensorflow as tf
+import models
+import shutil
+import pandas as pd
 from utils import *
+from tqdm import tqdm
 select_gpu(0, GB(4))
 
 
@@ -36,9 +37,9 @@ class CheckpointSaver(tf.keras.callbacks.Callback):
 
     def save_model(self, attr, epoch):
         fn = self.gen_filepath(attr, epoch)
-        onnx_fn = os.path.join(fn, f'{os.path.basename(fn)}.onnx')
         self.model.save(fn, save_format='tf')
-        self.save_onnx(onnx_fn)
+        # onnx_fn = os.path.join(fn, f'{os.path.basename(fn)}.onnx')
+        # self.save_onnx(onnx_fn)
         # delete old checkpoint
         if attr == 'acc':
             self.delete_model(self.best_acc_fn)
@@ -63,6 +64,19 @@ class CheckpointSaver(tf.keras.callbacks.Callback):
             shutil.rmtree(fn)
 
 
+def record_test_accuracy(result_dir, model_name, data_name, accuracy):
+    os.makedirs(result_dir, exist_ok=True)
+    xlsx_path = os.path.join(result_dir, 'accuracy.xlsx')
+    df_accuracy = pd.read_excel(xlsx_path) if os.path.isfile(xlsx_path) else pd.DataFrame(columns=['Dataset'])
+    if model_name not in df_accuracy.columns:
+        df_accuracy[model_name] = ""
+    if data_name not in df_accuracy['Dataset'].unique():
+        df_accuracy.loc[len(df_accuracy), ['Dataset', model_name]] = data_name, accuracy
+    else:
+        df_accuracy.loc[df_accuracy['Dataset'] == data_name, model_name] = accuracy
+    df_accuracy.to_excel(xlsx_path, index=False)
+
+
 def parse_args():
     """
     Generate and return arguments
@@ -71,25 +85,29 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Model trainer')
     parser.add_argument('--model',
                         type=str,
-                        default='mlp',
-                        choices=['mlp', ''],
+                        default='lstm',
+                        choices=['mlp', 'cnn', 'lstm'],
                         help='Choices')
+    parser.add_argument('--data_name',
+                        type=str,
+                        default='',
+                        help='Folder name of the dataset to use, set to empty to process all datasets')
+    parser.add_argument('--data_dir',
+                        type=str,
+                        default='./data/UCRArchive_2018',
+                        help='Directory to the data folder')
     parser.add_argument('--checkpoint_dir',
                         type=str,
                         default="./checkpoints",
+                        help='directory for checkpoint files')
+    parser.add_argument('--result_dir',
+                        type=str,
+                        default="./results",
                         help='directory for checkpoint files')
     parser.add_argument('--log_dir',
                         type=str,
                         default="./logs",
                         help='directory for training log')
-    parser.add_argument('--data_dir',
-                        type=str,
-                        default='./data/UCRArchive_2018',
-                        help='Directory to the data folder')
-    parser.add_argument('--data_name',
-                        type=str,
-                        default='Earthquakes',
-                        help='Folder name of the dataset to use, set to empty to process all datasets')
     parser.add_argument('--val_portion',
                         type=float,
                         default=0.3,
@@ -104,7 +122,7 @@ def parse_args():
                         help='learning rate')
     parser.add_argument('--lr_decay',
                         type=float,
-                        default=1.0,
+                        default=0.98,
                         help='learning rate decay')
     parser.add_argument('--epochs',
                         type=int,
@@ -112,8 +130,8 @@ def parse_args():
                         help='training epochs')
     parser.add_argument('--batch',
                         type=int,
-                        default=8,
-                        help='batch size')
+                        default=0,
+                        help='batch size, set to 0 to use auto batch size')
     parser.add_argument('--workers',
                         type=int,
                         default=6,
@@ -128,7 +146,7 @@ def parse_args():
                         help='save training log')
     parser.add_argument('--train_patience',
                         type=int,
-                        default=10,
+                        default=50,
                         help='Stop training when val_accuracy does not improve for n consecutive epochs,'
                              'set to 0 to disable early stopping.')
     return parser.parse_args()
@@ -136,7 +154,7 @@ def parse_args():
 
 def train(args, data_name):
     # load training data
-    dataset, unique_y_list = load_data(args.data_dir, data_name, nan_filler=0.0)
+    dataset, unique_y_list = load_data(args.data_dir, data_name)
     x_train, y_train = dataset['train']['x'], dataset['train']['y']
     dataset_train = tf.data.Dataset.from_tensor_slices((x_train, y_train))
     dataset_train, dataset_val = partitions_dataset(dataset_train,
@@ -144,25 +162,28 @@ def train(args, data_name):
                                                     shuffle=True,
                                                     seed=args.seed)
 
+    # calculate batch number
+    if args.batch > 0:
+        batch = args.batch
+    else:
+        batch = int(len(x_train)*0.7 // 100) if len(x_train)*0.7 // 100 > 8 else 8
+
     # shuffle training dataset
     train_size = dataset_train.cardinality().numpy()
     dataset_train = dataset_train.shuffle(train_size)
-    dataset_train = dataset_train.batch(args.batch)
-    dataset_val = dataset_val.batch(args.batch)
+    dataset_train = dataset_train.batch(batch)
+    dataset_val = dataset_val.batch(batch)
 
     # calculate input and output size
     in_size = x_train.shape[1]
     out_size = len(np.unique(y_train))
 
     if args.model == 'mlp':
-        model = tf.keras.Sequential([
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.Dense(args.hl_nodes, input_dim=in_size, activation='relu'),
-            tf.keras.layers.Dense(args.hl_nodes // 2, activation='relu'),
-            tf.keras.layers.Dense(args.hl_nodes // 4, activation='relu'),
-            tf.keras.layers.Dropout(0.5),
-            tf.keras.layers.Dense(out_size),
-        ])
+        model = models.create_mlp(in_size, out_size, args.hl_nodes)
+    elif args.model == 'cnn':
+        model = models.create_conv(in_size, out_size, kernel=3, stride=2, drop_rate=0.5)
+    elif args.model == 'lstm':
+        model = models.create_lstm(in_size, out_size, drop_rate=0.3)
     else:
         raise Exception(f'Invalid model type: {args.model}')
 
@@ -180,13 +201,13 @@ def train(args, data_name):
                   metrics=['sparse_categorical_accuracy'])
 
     fn_prefix = args.model
-    fn_suffix = 'b{}_l{}_h{}'.format(args.batch, args.lr, args.hl_nodes)
+    fn_suffix = 'b{}_l{}_h{}'.format(batch, args.lr, args.hl_nodes)
 
     # create checkpoint and log call backs
     callbacks = []
     checkpoint_dir = os.path.join(args.checkpoint_dir, data_name)
     os.makedirs(checkpoint_dir, exist_ok=True)
-    checkpoint_saver = CheckpointSaver(checkpoint_dir, fn_prefix, fn_suffix, save_per_n_rounds=5)
+    checkpoint_saver = CheckpointSaver(checkpoint_dir, fn_prefix, fn_suffix, save_per_n_rounds=1)
     callbacks.append(checkpoint_saver)
     if args.train_patience > 0:
         early_stopper = tf.keras.callbacks.EarlyStopping(monitor='val_sparse_categorical_accuracy',
@@ -198,7 +219,7 @@ def train(args, data_name):
 
     model.fit(dataset_train,
               validation_data=dataset_val,
-              batch_size=args.batch,
+              batch_size=batch,
               epochs=args.epochs,
               workers=args.workers,
               callbacks=callbacks)
@@ -207,8 +228,10 @@ def train(args, data_name):
 
     # Test model accuracy with test dataset
     dataset_test = tf.data.Dataset.from_tensor_slices((dataset['test']['x'], dataset['test']['y']))
-    dataset_test = dataset_test.batch(args.batch)
-    model.evaluate(dataset_test)
+    dataset_test = dataset_test.batch(batch)
+    model = tf.keras.models.load_model(checkpoint_saver.best_acc_fn)
+    _, acc = model.evaluate(dataset_test)
+    record_test_accuracy(args.result_dir, fn_prefix.upper(), data_name, acc)
 
 
 def main():

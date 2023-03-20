@@ -1,6 +1,6 @@
 import argparse
 from utils import *
-select_gpu(7, GB(4))
+select_gpu(0, GB(4))
 
 
 def parse_args():
@@ -49,7 +49,7 @@ def main():
     args = parse_args()
 
     # load and prepare test dataset
-    dataset, unique_y_list = load_data(args.data_dir, args.data_name, nan_filler=0.0)
+    dataset, unique_y_list = load_data(args.data_dir, args.data_name)
     dataset_test = tf.data.Dataset.from_tensor_slices((dataset['test']['x'], dataset['test']['y']))
     dataset_test = dataset_test.batch(args.batch)
 
