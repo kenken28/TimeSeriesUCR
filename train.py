@@ -1,9 +1,7 @@
 import argparse
 import models
 import shutil
-import pandas as pd
 from utils import *
-from tqdm import tqdm
 select_gpu(0, GB(4))
 
 
@@ -62,19 +60,6 @@ class CheckpointSaver(tf.keras.callbacks.Callback):
     def delete_model(fn):
         if fn is not None:
             shutil.rmtree(fn)
-
-
-def record_test_accuracy(result_dir, model_name, data_name, accuracy):
-    os.makedirs(result_dir, exist_ok=True)
-    xlsx_path = os.path.join(result_dir, 'accuracy.xlsx')
-    df_accuracy = pd.read_excel(xlsx_path) if os.path.isfile(xlsx_path) else pd.DataFrame(columns=['Dataset'])
-    if model_name not in df_accuracy.columns:
-        df_accuracy[model_name] = ""
-    if data_name not in df_accuracy['Dataset'].unique():
-        df_accuracy.loc[len(df_accuracy), ['Dataset', model_name]] = data_name, accuracy
-    else:
-        df_accuracy.loc[df_accuracy['Dataset'] == data_name, model_name] = accuracy
-    df_accuracy.to_excel(xlsx_path, index=False)
 
 
 def parse_args():
@@ -239,9 +224,10 @@ def main():
     if args.data_name:
         train(args, args.data_name)
     else:
-        for data_name in tqdm(os.listdir(args.data_dir)):
+        data_name_list = os.listdir(args.data_dir)
+        for i, data_name in enumerate(data_name_list):
             if data_name != 'Missing_value_and_variable_length_datasets_adjusted':
-                print(f"Start training {data_name}.")
+                print(f'[{i}/{len(data_name_list)}] Start training {data_name}.')
                 train(args, data_name)
 
 

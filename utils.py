@@ -2,6 +2,7 @@ import numpy as np
 import os
 import tf2onnx
 import tensorflow as tf
+import pandas as pd
 from typing import Union
 
 
@@ -9,16 +10,27 @@ def GB(n):
     return n * 1024
 
 
-def select_gpu(gpu='7', mem=1024):
-    import os
-    import tensorflow as tf
+def select_gpu(gpu='0', mem=1024):
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu)
     physical_devices = tf.config.list_physical_devices('GPU')
     for device in physical_devices:
         tf.config.set_logical_device_configuration(device, [tf.config.LogicalDeviceConfiguration(memory_limit=mem)])
 
 
-def partitions_dataset(ds, val_portion=0.7, shuffle=True, seed=0):
+def record_test_accuracy(result_dir, model_name, data_name, accuracy):
+    os.makedirs(result_dir, exist_ok=True)
+    xlsx_path = os.path.join(result_dir, 'accuracy.xlsx')
+    df_accuracy = pd.read_excel(xlsx_path) if os.path.isfile(xlsx_path) else pd.DataFrame(columns=['Dataset'])
+    if model_name not in df_accuracy.columns:
+        df_accuracy[model_name] = ""
+    if data_name not in df_accuracy['Dataset'].unique():
+        df_accuracy.loc[len(df_accuracy), ['Dataset', model_name]] = data_name, accuracy
+    else:
+        df_accuracy.loc[df_accuracy['Dataset'] == data_name, model_name] = accuracy
+    df_accuracy.to_excel(xlsx_path, index=False)
+
+
+def partitions_dataset(ds, val_portion=0.7, shuffle=True, seed=None):
     """
     Partition the given dataset into training, validation, and test sets
     :param ds: inout & output dataset in tf.data.Dataset format
@@ -72,7 +84,7 @@ def load_tsv_to_npy(tsv_path):
 
 
 def boolean_string(s):
-    if s not in {'False', 'True'}:
+    if s not in ['False', 'True']:
         raise ValueError('Not a valid boolean string')
     return s == 'True'
 
