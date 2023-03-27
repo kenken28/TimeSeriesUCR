@@ -20,20 +20,38 @@ class CheckpointSaver(tf.keras.callbacks.Callback):
         self.save_per_n_rounds = save_per_n_rounds
 
     def reset(self):
+        """
+        Reset parameters
+        """
         self.best_acc = 0.0
         self.best_loss = 9999999.9
         self.best_acc_fn = None
         self.best_loss_fn = None
 
     def gen_filepath(self, attr, epoch):
+        """
+        Generate folder name for the checkpoint files
+        :param attr: attribute to be measured
+        :param epoch: number of epoch trained
+        :return: full path to the checkpoint folder
+        """
         best_val = self.best_acc if attr == 'acc' else self.best_loss
         fn = '{}_{}{:.4f}_e{}_{}'.format(self.prefix, attr, best_val, epoch, self.suffix)
         return os.path.join(self.cp_dir, fn)
 
     def save_onnx(self, onnx_save_path):
+        """
+        Save the model checkpoint as an ONNX file
+        :param onnx_save_path: ONNX filepath
+        """
         tf_to_onnx(self.model, onnx_save_path)
 
     def save_model(self, attr, epoch):
+        """
+        Save the model at its current state as a checkpoint
+        :param attr:
+        :param epoch:
+        """
         fn = self.gen_filepath(attr, epoch)
         self.model.save(fn, save_format='tf')
         # onnx_fn = os.path.join(fn, f'{os.path.basename(fn)}.onnx')
@@ -47,6 +65,11 @@ class CheckpointSaver(tf.keras.callbacks.Callback):
             self.best_loss_fn = fn
 
     def on_epoch_end(self, epoch, logs=None):
+        """
+        Check if the model need to be saved, this method is triggered at the end of each epoch
+        :param epoch: number of epoch passed
+        :param logs: attributes logged
+        """
         if epoch == 0:
             self.reset()
         if epoch % self.save_per_n_rounds == 0 and self.best_acc < logs['val_sparse_categorical_accuracy']:
@@ -58,6 +81,10 @@ class CheckpointSaver(tf.keras.callbacks.Callback):
 
     @staticmethod
     def delete_model(fn):
+        """
+        Delete the specified checkpoint
+        :param fn: full path to the checkpoint folder
+        """
         if fn is not None:
             shutil.rmtree(fn)
 
@@ -163,6 +190,7 @@ def train(args, data_name):
     in_size = x_train.shape[1]
     out_size = len(np.unique(y_train))
 
+    # initiate model based on selected model type
     if args.model == 'mlp':
         model = models.create_mlp(in_size, out_size, args.hl_nodes)
     elif args.model == 'cnn':
@@ -181,14 +209,14 @@ def train(args, data_name):
                                                                        decay_rate=args.lr_decay,
                                                                        staircase=True)
 
+    # compile model
     model.compile(optimizer=tf.keras.optimizers.RMSprop(learning_rate=learning_rate),
                   loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                   metrics=['sparse_categorical_accuracy'])
 
+    # create checkpoint-saving callback and log-saving callback
     fn_prefix = args.model
     fn_suffix = 'b{}_l{}_h{}'.format(batch, args.lr, args.hl_nodes)
-
-    # create checkpoint and log call backs
     callbacks = []
     checkpoint_dir = os.path.join(args.checkpoint_dir, data_name)
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -202,16 +230,16 @@ def train(args, data_name):
         logger = tf.keras.callbacks.TensorBoard(log_dir=args.log_dir, histogram_freq=1)
         callbacks.append(logger)
 
+    # start training model
     model.fit(dataset_train,
               validation_data=dataset_val,
               batch_size=batch,
               epochs=args.epochs,
               workers=args.workers,
               callbacks=callbacks)
-    # perform evaluation on test dataset
-    print("\n\nEvaluating test dataset...")
 
-    # Test model accuracy with test dataset
+    # Evaluate model accuracy with test dataset
+    print("\n\nTesting model accuracy...")
     dataset_test = tf.data.Dataset.from_tensor_slices((dataset['test']['x'], dataset['test']['y']))
     dataset_test = dataset_test.batch(batch)
     model = tf.keras.models.load_model(checkpoint_saver.best_acc_fn)
@@ -222,8 +250,10 @@ def train(args, data_name):
 def main():
     args = parse_args()
     if args.data_name:
+        # train the model on only the specified dataset if data_name parameter is not empty
         train(args, args.data_name)
     else:
+        # else train the model on every dataset
         data_name_list = os.listdir(args.data_dir)
         for i, data_name in enumerate(data_name_list):
             if data_name != 'Missing_value_and_variable_length_datasets_adjusted':
